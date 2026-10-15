@@ -1925,6 +1925,17 @@ return a failure. Providers without this capability, explicit harness uploads,
 and npm installs keep the serial path. See the
 [native artifact controls](../server/src/services/native-runtime/native-artifact-preparation.test.ts).
 
+Stamped app images also carry `provider-pack.tar.zst` and
+`provider-pack.archive.json` beside their unpacked provider pack. The cloud build
+creates these once with zstd, so a sandbox with an older pack receives compressed bytes
+without blocking startup on compression. The receipt binds the archive hash and
+size to the expected provider-pack digest. The controller checks it before upload,
+the sandbox checks the transferred hash before extraction, and normal full pack
+verification still runs afterward. Missing sidecars retain directory staging for
+source installs, as does missing remote zstd; invalid sidecars fail closed. Keep the archive outside the pack
+directory so it cannot include itself. Matching staged/preinstalled packs remain
+preferred and never transfer the archive.
+
 ### Remote GitHub launcher staging
 
 Managed GitHub launchers stage their nine text files in one bounded control
@@ -1935,6 +1946,7 @@ the launcher environment is returned only after the whole command succeeds.
 The batch permits at most 16 files and 1 MiB of shell input. Launcher staging
 keeps its 15-second deadline. Run `packages/adapter-utils/src/github-launcher-environment.test.ts`
 and `packages/adapter-utils/src/sandbox-callback-bridge.test.ts` for these contracts.
+
 
 ### Native runner restart recovery
 
