@@ -1934,7 +1934,8 @@ the sandbox checks the transferred hash before extraction, and normal full pack
 verification still runs afterward. Missing sidecars retain directory staging for
 source installs, as does missing remote zstd; invalid sidecars fail closed. Keep the archive outside the pack
 directory so it cannot include itself. Matching staged/preinstalled packs remain
-preferred and never transfer the archive.
+preferred and never transfer the archive. Daytona detects gzip/zstd headers and
+skips redundant transport compression for those files.
 
 ### Remote GitHub launcher staging
 

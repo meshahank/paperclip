@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -11,6 +11,7 @@ import { readProviderPackArchive, stageProviderPackArchive } from "./provider-pa
 import { createProviderPackArchive } from "../../../../scripts/create-provider-pack-archive.mjs";
 
 const exec = promisify(execFile);
+const hasZstd = spawnSync("zstd", ["--version"]).status === 0;
 const roots: string[] = [];
 const digest = `sha256:${"a".repeat(64)}`;
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))); });
@@ -76,7 +77,7 @@ it.each(["identity", "bytes", "sha256", "json", "symlink"])("rejects invalid arc
   await expect(readProviderPackArchive(pack, digest)).rejects.toThrow();
 });
 
-it.skipIf(!tar)("uploads build-time bytes to fresh targets, preserving files, modes and symlinks", async () => {
+it.skipIf(!tar || !hasZstd)("uploads build-time bytes to fresh targets, preserving files, modes and symlinks", async () => {
   const { root, archive } = await fixture();
   const remote = await runner(root);
   for (const name of ["first ' ; #", "follow-up"]) {
@@ -91,7 +92,7 @@ it.skipIf(!tar)("uploads build-time bytes to fresh targets, preserving files, mo
   expect(remote.syncIn).toHaveBeenCalledTimes(2);
 });
 
-it.skipIf(!tar)("rejects corrupt transferred bytes before extracting and cleans scratch", async () => {
+it.skipIf(!tar || !hasZstd)("rejects corrupt transferred bytes before extracting and cleans scratch", async () => {
   const { root, archive } = await fixture();
   const targetPath = path.join(root, "target");
   await expect(stageProviderPackArchive({ archive, runner: await runner(root, true), targetPath }))
@@ -100,7 +101,7 @@ it.skipIf(!tar)("rejects corrupt transferred bytes before extracting and cleans 
   expect((await fs.readdir(root)).some(name => name.includes(".upload-"))).toBe(false);
 });
 
-it.skipIf(!tar)("does not follow a remote target symlink", async () => {
+it.skipIf(!tar || !hasZstd)("does not follow a remote target symlink", async () => {
   const { root, archive } = await fixture();
   const targetPath = path.join(root, "target");
   const other = path.join(root, "other");
@@ -110,7 +111,7 @@ it.skipIf(!tar)("does not follow a remote target symlink", async () => {
   expect(await fs.readdir(other)).toEqual([]);
 });
 
-it.skipIf(!tar)("rejects malformed tar even with a matching transport digest", async () => {
+it.skipIf(!tar || !hasZstd)("rejects malformed tar even with a matching transport digest", async () => {
   const { root, archive } = await fixture();
   await fs.writeFile(archive.sourcePath, "invalid tar");
   archive.sha256 = createHash("sha256").update("invalid tar").digest("hex");

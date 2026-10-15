@@ -1887,3 +1887,12 @@ repeated CPU work. Actual target image size will be recorded after the build.
 Eleven archive contract tests pass. The focused native selection/transport suite
 passes 56 selected tests. Local full server typecheck has fourteen pre-existing
 missing/stale dependency errors; broad verification runs in a clean cloud job.
+
+Performance PR: [16493](https://github.com/paperclipai/paperclip/pull/16493),
+stacked on the existing platform PR. Review identified redundant compression in
+the shared Daytona file mapper and a missing zstd test-host gate. The mapper now
+recognizes gzip/zstd content headers without relying on filenames. Thirty real
+file-sync tests and eleven archive tests pass. Broad source verification and the
+single-target deployment are running remotely; the first deployment watcher was
+stopped before rollout so the reviewed candidate can replace it. No fleet default
+or production setting was changed.
