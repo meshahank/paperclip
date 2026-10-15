@@ -409,7 +409,9 @@ above still apply.
 ## Native Runner Trace Spans
 
 Provider-pack fallback staging separates `provider_pack.archive.verify`
-(controller archive identity), `provider_pack.archive.probe` (remote zstd support),
+(controller archive identity), `provider_pack.archive.probe` (remote helper support),
+`provider_pack.archive.reuse` (copy and hash image files),
+`provider_pack.archive.verify_missing` (verify only layers needing upload),
 `provider_pack.archive.transfer` (compressed file
 transfer), and `provider_pack.archive.extract` (received hash check and extraction).
 They are children of the existing pack selection/upload path and also appear in

@@ -160,7 +160,7 @@ RUN mkdir -p /provider-pack /provider-pack-transport \
   && if [ -n "${PAPERCLIP_BUILD_COMMIT}" ]; then \
     PAPERCLIP_RUNNER_SOURCE_REVISION="${PAPERCLIP_BUILD_COMMIT}" node packages/paperclip-runner/scripts/build-provider-pack.mjs /provider-pack \
       && node scripts/create-provider-pack-archive.mjs /provider-pack \
-      && mv /provider-pack.tar.zst /provider-pack.archive.json /provider-pack-transport/; \
+      && mv /provider-pack.archives /provider-pack.archive.json /provider-pack-transport/; \
   else \
     echo "Skipping remote provider pack: supply a full PAPERCLIP_BUILD_COMMIT to enable remote OpenCode/ACPX execution"; \
   fi

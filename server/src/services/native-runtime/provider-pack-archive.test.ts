@@ -8,7 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CommandManagedRuntimeRunner } from "@paperclipai/adapter-utils/command-managed-runtime";
 import { readProviderPackArchive, stageProviderPackArchive } from "./provider-pack-archive.js";
 // @ts-expect-error Build-time script has no TypeScript declaration.
-import { createProviderPackArchive } from "../../../../scripts/create-provider-pack-archive.mjs";
+import { createProviderPackArchive, createProviderPackLayers } from "../../../../scripts/create-provider-pack-archive.mjs";
 
 const exec = promisify(execFile);
 const hasZstd = spawnSync("zstd", ["--version"]).status === 0;
@@ -26,6 +26,7 @@ async function fixture() {
   await fs.symlink("bin/tool", path.join(pack, "tool"));
   await createProviderPackArchive(pack);
   const archive = (await readProviderPackArchive(pack, digest))!;
+  if ("kind" in archive) throw Error("Expected historical single archive");
   return { root, pack, archive };
 }
 
@@ -42,10 +43,12 @@ async function runner(root: string, corrupt = false) {
   const syncIn = vi.fn<NonNullable<CommandManagedRuntimeRunner["syncIn"]>>(async operations => {
     for (const operation of operations) for (const file of operation.files) {
       expect(file.kind).toBe("file");
+      await fs.mkdir(path.dirname(file.targetPath), { recursive: true });
       await fs.copyFile(file.sourcePath, file.targetPath);
       if (corrupt) await fs.appendFile(file.targetPath, "corrupted in transit");
     }
-    return { operations: operations.map(operation => ({ operationId: operation.operationId, filesTransferred: operation.files.length, bytesTransferred: 0 })) };
+    return { operations: await Promise.all(operations.map(async operation => ({ operationId: operation.operationId, filesTransferred: operation.files.length,
+      bytesTransferred: (await Promise.all(operation.files.map(async file => (await fs.stat(file.sourcePath)).size))).reduce((sum, size) => sum + size, 0) }))) };
   });
   const execute = vi.fn<CommandManagedRuntimeRunner["execute"]>(async input => {
     try {
@@ -60,6 +63,87 @@ async function runner(root: string, corrupt = false) {
 
 it("keeps historical/source packs without an archive on the existing path", async () => {
   expect(await readProviderPackArchive("/does-not-exist/provider-pack", digest)).toBeNull();
+});
+
+async function layeredFixture() {
+  const { root, pack } = await fixture();
+  await fs.writeFile(path.join(pack, "bin", "large"), Buffer.alloc(1024 * 1024, 42), { mode: 0o755 });
+  const receipt = await createProviderPackLayers(pack);
+  const archive = (await readProviderPackArchive(pack, digest))!;
+  if (!("kind" in archive)) throw Error("Expected layered archive");
+  return { root, pack, receipt, archive };
+}
+
+it.skipIf(!tar || !hasZstd)("reuses only byte-matched image files, keeps modes, and never shares writable hardlinks", async () => {
+  const { root, pack, archive } = await layeredFixture();
+  const remote = await runner(root);
+  const targetPath = path.join(root, "fresh");
+  expect(await stageProviderPackArchive({ archive, runner: remote, targetPath, reuseRoots: [pack] })).toBe(true);
+  expect(remote.syncIn.mock.calls[0]![0][0]!.files).toHaveLength(1);
+  expect((await remote.syncIn.mock.results[0]!.value).operations[0]!.bytesTransferred).toBe(archive.overlay.bytes);
+  const original = path.join(pack, "bin/large"), copied = path.join(targetPath, "bin/large");
+  expect(await fs.readFile(copied)).toEqual(await fs.readFile(original));
+  expect((await fs.stat(copied)).mode & 0o777).toBe(0o755);
+  expect((await fs.stat(copied)).ino).not.toBe((await fs.stat(original)).ino);
+  await fs.writeFile(copied, "changed");
+  expect((await fs.stat(original)).size).toBe(1024 * 1024);
+  expect(await fs.readlink(path.join(targetPath, "tool"))).toBe("bin/tool");
+});
+
+it.skipIf(!tar || !hasZstd).each(["missing", "wrong-digest", "symlink", "ancestor-symlink"])("transfers a large layer when the image file is %s", async reason => {
+  const { root, pack, archive } = await layeredFixture();
+  const remote = await runner(root);
+  const old = path.join(root, "old");
+  await fs.cp(pack, old, { recursive: true });
+  const large = path.join(old, "bin/large");
+  if (reason === "missing") await fs.unlink(large);
+  if (reason === "wrong-digest") await fs.writeFile(large, Buffer.alloc(1024 * 1024, 43));
+  if (reason === "symlink") { await fs.unlink(large); await fs.symlink(path.join(pack, "bin/large"), large); }
+  if (reason === "ancestor-symlink") { await fs.rm(path.join(old, "bin"), { recursive: true }); await fs.symlink(path.join(pack, "bin"), path.join(old, "bin")); }
+  const targetPath = path.join(root, "fresh");
+  expect(await stageProviderPackArchive({ archive, runner: remote, targetPath, reuseRoots: [old] })).toBe(true);
+  expect((await remote.syncIn.mock.results[0]!.value).operations[0]!.bytesTransferred).toBe(archive.overlay.bytes + archive.files[0]!.archive.bytes);
+  expect(await fs.readFile(path.join(targetPath, "bin/large"))).toEqual(await fs.readFile(path.join(pack, "bin/large")));
+});
+
+it.each(["traversal", "duplicate", "ancestor", "mode", "digest", "layer-symlink"])("rejects invalid layer metadata or bytes: %s", async reason => {
+  const { pack, receipt } = await layeredFixture();
+  if (reason === "traversal") receipt.files[0].path = "../outside";
+  if (reason === "duplicate") receipt.files.push(receipt.files[0]);
+  if (reason === "ancestor") receipt.files.push({ ...receipt.files[0], path: "bin" });
+  if (reason === "mode") receipt.files[0].mode = 0o4755;
+  if (reason === "digest") receipt.overlay.sha256 = "0".repeat(64);
+  if (reason === "layer-symlink") {
+    const overlay = `${pack}.archives/overlay.tar.zst`;
+    await fs.rename(overlay, `${overlay}.original`); await fs.symlink(`${overlay}.original`, overlay);
+  }
+  await fs.writeFile(`${pack}.archive.json`, JSON.stringify(receipt));
+  await expect(readProviderPackArchive(pack, digest)).rejects.toThrow();
+});
+
+it.skipIf(!tar || !hasZstd)("rejects a corrupt missing layer before transfer and a corrupt upload before extraction", async () => {
+  const { root, pack, archive } = await layeredFixture();
+  const remote = await runner(root, true);
+  const targetPath = path.join(root, "fresh");
+  await expect(stageProviderPackArchive({ archive, runner: remote, targetPath })).rejects.toThrow("runner_remote_provider_archive_extract_failed");
+  expect(await fs.readdir(targetPath)).toEqual([]);
+  expect((await fs.readdir(root)).some(name => name.includes(".upload-"))).toBe(false);
+  await fs.appendFile(`${pack}.archives/0.tar.zst`, "corrupt");
+  remote.syncIn.mockClear();
+  await expect(stageProviderPackArchive({ archive, runner: remote, targetPath: `${targetPath}-2` })).rejects.toThrow("runner_remote_provider_archive_invalid");
+  expect(remote.syncIn).not.toHaveBeenCalled();
+});
+
+it.skipIf(!tar || !hasZstd)("does not follow a layered target symlink or accept invalid reuse receipts", async () => {
+  const { root, archive } = await layeredFixture();
+  const remote = await runner(root);
+  const targetPath = path.join(root, "target"), other = path.join(root, "other");
+  await fs.mkdir(other); await fs.symlink(other, targetPath);
+  await expect(stageProviderPackArchive({ archive, runner: remote, targetPath })).rejects.toThrow("runner_remote_provider_archive_reuse_failed");
+  expect(await fs.readdir(other)).toEqual([]);
+  remote.execute.mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "[999999]", stderr: "", signal: null, pid: null, startedAt: null });
+  await expect(stageProviderPackArchive({ archive, runner: remote, targetPath: `${targetPath}-2` })).rejects.toThrow("runner_remote_provider_archive_reuse_failed");
+  expect(remote.syncIn).not.toHaveBeenCalled();
 });
 
 it.each(["identity", "bytes", "sha256", "json", "symlink"])("rejects invalid archive %s", async failure => {

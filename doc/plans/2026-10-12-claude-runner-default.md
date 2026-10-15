@@ -1896,3 +1896,66 @@ file-sync tests and eleven archive tests pass. Broad source verification and the
 single-target deployment are running remotely; the first deployment watcher was
 stopped before rollout so the reviewed candidate can replace it. No fleet default
 or production setting was changed.
+
+
+### First startup optimization deployed; follow-up threshold not met — 2026-10-15
+
+Serving source `0215a521fd17ed18ff159f2f13da1e1d98647df2`, image
+`ghcr.io/paperclipai/paperclip@sha256:e73177f4cb4158efb97678452041eae4506ad2a1e956eb6a1752fa9bbe5264f9`,
+was deployed only to the dedicated QA tenant by
+[38811327131](https://github.com/paperclipai/paperclip-cloud/actions/runs/38811327131).
+Image build [38807675425](https://github.com/paperclipai/paperclip/actions/runs/38807675425)
+ran in the cloud; the retained image artifact is 4,372,269,316 bytes.
+
+The strict 48-step user journey on [CLA-3](https://claude-runner-default-qa-oct-15.test.paperclip.app/CLA/issues/CLA-3)
+produced two successful useful files and preserved the provider session.
+Performance acceptance remains **failed**: the follow-up exceeded the unchanged
+30-second native-startup target. No paid retries were started.
+
+| Turn | Run | Native startup | Archive transfer / extract | Task duration | API estimate |
+| --- | --- | --- | --- | --- | --- |
+| First | `d77d718b-810b-4244-bff5-3f7366199108` | 26.594s | 6.474s / 5.545s | 1m35s | $0.2166 |
+| Follow-up | `50d643e2-82a1-44f9-93c2-b416ada77eeb` | 48.388s | 21.469s / 6.242s | 1m55s | $0.1475 |
+
+These startup spans exclude task preparation (9.155s / 17.504s) and model
+response time. They must not be presented as time from click to first response.
+The original 133.446s / 136.285s startup baseline remains retained.
+Both new runs use provider session `67c358c5-cc9a-4155-a391-3fde8afabe9a`.
+Independent browser-download checks confirm five original checklist items remain,
+v2 adds Recovery, and downloading v1 again yields identical bytes.
+V1 SHA-256: `7f7fe25076e182ee4a0994b8d4870a3bd621d3f3c367a08156dbbce88e8df408` (974 bytes);
+v2: `fbdc337a1ff34c34936672f44d9cd29aae50bd4e9d062680c64572eb43e3ddb6` (1,421 bytes).
+Evidence: `/private/tmp/claude-startup-user-20261015/`, including the ended journey,
+HTML screenshot report, and independent-verification.json. The agent is paused
+again. This pair adds $0.3641 estimated API usage; project lifetime usage is about
+$0.7192 under its existing $2 cap, within the aggregate $50 qualification ceiling.
+
+Current main PR CI passes, Greptile is 5/5 with zero unresolved threads, and
+Paperclip Review remains queued. The separate broad harness passed typecheck,
+build, token gates, and runner typecheck, but its 15-minute full-test limit timed
+out and three runner-eval support tests failed. A longer existing verification
+run is in progress; no full-harness pass is claimed. Next experiment: quantify
+hash-matched files already in the stale image to remove the large network transfer
+without relaxing admission or changing fleet-wide sandbox defaults.
+
+
+The second no-prompt experiment verified 2,012,177,122 bytes of identical large
+files already present in the stale image (48 files; 3.548s hash inspection).
+The v2 transport now builds a small-file overlay and separate large-file layers,
+copies matching image files into a private directory, hashes the copies, and
+transfers only missing layers. Required frames are concatenated without
+recompression into one upload; all transferred hashes and final pack admission
+remain enforced. Historical v1 transport remains readable.
+
+The actual Daytona mapper probe with the same public qualified pack measured:
+0.031s receipt/overlay check, 0.065s capability check, 3.507s copy/hash reuse,
+0.560s required-layer verification/batching, 1.293s transfer, 2.283s extraction,
+and 0.469s declared-artifact verification. Upload fell from 978,057,504 bytes to
+289,942,911 bytes. Receipt: `layer-probe-output.json` in the existing evidence
+directory. The sandbox was deleted, and no provider prompt was sent. This is
+a transport experiment, not acceptance evidence for the deployed app.
+Twenty-four archive tests pass, including corruption, source/target symlinks,
+private-copy isolation, historical readers, and missing-file transfer. The stale
+workflow-security assertion now reflects the platform branch's trusted release
+consumer checkout; all twelve focused security assertions pass. No workflow was
+changed. The next cloud image will qualify the integrated source on the QA tenant.

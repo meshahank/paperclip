@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import type { CommandManagedRuntimeRunner } from "@paperclipai/adapter-utils/command-managed-runtime";
 import type { NativeRunTrace } from "./native-run-trace.js";
+import { readProviderPackLayers, stageProviderPackLayers } from "./provider-pack-layers.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -13,6 +14,9 @@ export async function readProviderPackArchive(root: string, expectedDigest: stri
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new Error("runner_remote_provider_archive_invalid", { cause: error });
+  }
+  if (receipt.schema === "paperclip-runner/provider-pack-archive/v2") {
+    return readProviderPackLayers(root, expectedDigest, receipt);
   }
   if (receipt.schema !== "paperclip-runner/provider-pack-archive/v1"
     || receipt.encoding !== "tar+zstd"
@@ -40,7 +44,10 @@ export async function stageProviderPackArchive(input: {
   runner: CommandManagedRuntimeRunner;
   targetPath: string;
   trace?: NativeRunTrace;
+  reuseRoots?: readonly string[];
 }): Promise<boolean> {
+  if ("kind" in input.archive) return stageProviderPackLayers({ ...input, archive: input.archive, reuseRoots: input.reuseRoots ?? [] });
+  const archive = input.archive;
   if (!input.runner.syncIn) throw new Error("runner_remote_provider_archive_transport_unavailable");
   const archivePath = `${input.targetPath}.upload-${randomUUID()}.tar.zst`;
   const measure = <T>(name: string, fn: () => Promise<T>) => input.trace ? input.trace.measure(name, fn) : fn();
@@ -52,14 +59,14 @@ export async function stageProviderPackArchive(input: {
   try {
     await measure("provider_pack.archive.transfer", () => input.runner.syncIn!([{
       operationId: `runner-provider-archive-${randomUUID()}`,
-      files: [{ kind: "file", sourcePath: input.archive.sourcePath, targetPath: archivePath, mode: 0o600 }],
+      files: [{ kind: "file", sourcePath: archive.sourcePath, targetPath: archivePath, mode: 0o600 }],
     }]));
     const result = await measure("provider_pack.archive.extract", () => input.runner.execute({
       command: "sh",
       args: ["-c", [
         "set -eu; umask 077;",
         `test ! -L ${quote(archivePath)}; test -f ${quote(archivePath)};`,
-        `test "$(sha256sum -- ${quote(archivePath)} | cut -d ' ' -f 1)" = ${quote(input.archive.sha256)};`,
+        `test "$(sha256sum -- ${quote(archivePath)} | cut -d ' ' -f 1)" = ${quote(archive.sha256)};`,
         `test ! -L ${quote(input.targetPath)}; mkdir -p ${quote(input.targetPath)};`,
         `tar --zstd -xf ${quote(archivePath)} --no-same-owner --same-permissions --delay-directory-restore -C ${quote(input.targetPath)};`,
         `chmod 700 ${quote(input.targetPath)};`,
