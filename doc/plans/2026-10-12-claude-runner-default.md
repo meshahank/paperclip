@@ -1959,3 +1959,72 @@ private-copy isolation, historical readers, and missing-file transfer. The stale
 workflow-security assertion now reflects the platform branch's trusted release
 consumer checkout; all twelve focused security assertions pass. No workflow was
 changed. The next cloud image will qualify the integrated source on the QA tenant.
+
+### Layered transport deployed; remaining resume latency — 2026-10-15
+
+Serving source `81235a33604ccf9744077924bdef3db75b80e22d` is verified on the
+dedicated QA workspace. The immutable image is
+`ghcr.io/paperclipai/paperclip@sha256:85dbeb3ba1dc241a5772f416e1f0f9b9964d6f567157a90fbd1ddc97591c090a`.
+[Cloud image build](https://github.com/paperclipai/paperclip/actions/runs/38814943155)
+retained a 4,544,726,788-byte image artifact.
+[Single-workspace deployment](https://github.com/paperclipai/paperclip-cloud/actions/runs/38817414740)
+verified that source at 22:33:54 UTC, request
+`d47ba355-9f90-4499-92cb-9bd5ce350c93`. No local Docker or Rust build was used.
+
+The 39-step ordinary-UI journey on
+[CLA-4](https://claude-runner-default-qa-oct-15.test.paperclip.app/CLA/issues/CLA-4)
+completed both tasks, independently downloaded both files, checked the original
+again, and reloaded the saved result. Correctness passed. Performance acceptance
+is still **failed** against the unchanged target of both startup spans below 30s.
+
+| Turn | Run | Native startup | Pack selection | Transfer / extract | Task duration | API estimate |
+| --- | --- | --- | --- | --- | --- | --- |
+| First | `40da6e01-e114-4244-886d-1dd159f6233f` | 20.017s | 12.461s | 2.066s / 2.762s | 1m12s | $0.2097 |
+| Follow-up | `a4de4222-542d-468e-9016-69e883cfa15a` | 37.834s | 23.512s | 10.500s / 3.202s | 1m43s | $0.1582 |
+
+Relative to the original pair, native startup fell by 85.0% and 72.2%. These are
+startup spans, not click-to-response times. Task preparation was 8.218s / 19.035s;
+provider first-event latency after startup was 1.849s / 2.624s. The follow-up
+created a replacement sandbox, restored its checkpoint, and retained session
+`fc794198-95b6-4666-b228-a30cbd6cb5e6`. Both runs recorded `keep=false` cleanup.
+
+Independent checks: v1 is 801 bytes, SHA-256
+`1013d26f2fdb441d7c60ec500fa95c739ee94fe0f801eed59f96df67491ca973`;
+v2 is 1,082 bytes, SHA-256
+`b64625202dbe68898a3d538fa640561643ae4bdde342477b29a02aa5d093001b`.
+All five original checklist items remain verbatim, v2 adds two Recovery items,
+and the second download of v1 is byte-identical. The agent is paused and timer
+heartbeats remain disabled. This pair adds $0.3679 estimated API usage, for about
+$1.0871 on the existing $2 project cap. No unknown-charge hold was released and
+no automatic paid retry was started. The remaining balance is below the existing
+$1 run reservation; another run must not be started without budget reconciliation.
+
+Evidence is retained at `/private/tmp/claude-startup-user-20261015-layers/` and
+attached to the task:
+
+- [Screenshot report](https://claude-runner-default-qa-oct-15.test.paperclip.app/api/attachments/25f950a0-257e-4a66-97d0-f30bb6094983/content?download=1)
+- [Journey JSON](https://claude-runner-default-qa-oct-15.test.paperclip.app/api/attachments/20e42fc1-0466-4e5c-9c6a-91bc5e3c3f4b/content?download=1)
+- [Independent checks](https://claude-runner-default-qa-oct-15.test.paperclip.app/api/attachments/fa3a1f36-445a-4205-a3de-bb144d167ab9/content?download=1)
+
+The rendered report and gallery navigation were visually checked. It records
+the failed performance target, including the earlier recorder binding error and
+the actual UI friction; the ended journal has not been rewritten as a pass.
+
+The residual delay remains predominantly provider-pack preparation. A bounded
+no-prompt content-reuse audit found another 138,023,392 matching bytes at different
+paths, but scanning the old image took 8.985s and hashed 2.59 GB. That is not a
+credible speed improvement, so no speculative content scan was added. Its owned
+sandbox was deleted (`content-reuse-probe-output.json`). The matching image
+already passed 22 runtime checks, but Cloud's supported sandbox-image campaign
+requires it to be the fleet default first. Applying it only to this QA workspace
+requires a scoped image-canary capability; neither a fleet-wide promotion nor a
+managed-config bypass was performed. That image rollout is the next path to
+removing transfer entirely, and it still needs fresh task/follow-up acceptance.
+
+[Main CI](https://github.com/paperclipai/paperclip/actions/runs/38814748461)
+passed all 56 checks on the deployed source, including typecheck, sharded tests,
+build, and token gates. Greptile reviewed that source at 5/5 with no unresolved
+threads. Paperclip Review's separate task is blocked by its chat connection;
+it is not counted as a passed review. The additional unsharded verification jobs
+remain separately tracked; no full unsharded-harness pass is claimed. No AWS
+login or Honeycomb configuration change was needed for this diagnosis.
